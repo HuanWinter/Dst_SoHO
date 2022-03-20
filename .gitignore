@@ -1,0 +1,11 @@
+__pycache__
+
+Data/
+Figs/
+Res/
+
+history.json
+optimizer.pt
+criterion.pt
+test.jpg
+Main_RNN.ipynb
