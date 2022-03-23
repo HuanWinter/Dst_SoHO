@@ -13,11 +13,12 @@ from matplotlib import rc
 import matplotlib.colors as colors
 
 from Model.Modules import CNN_batch, CNN_batch_multi, \
-    ResidualAttentionModel_andong_pre
+    ResidualAttentionModel_andong_256, \
+    ResidualAttentionModel_andong_64
 from ML_Modules import seed_torch, init_weights, \
     PhysinformedNet, norm21
 from ML_Modules import calibrate, ROC, noncalibrate, \
-    norm_1d, proba_comba, AdjustWithConstraint_AH
+    norm_1d, proba_comba
 from ML_Modules import illustrate_colormap, \
     grayify_colormap, my_weight_rmse2
 
@@ -28,6 +29,15 @@ from skorch.callbacks import EarlyStopping, \
 from skorch.dataset import CVSplit
 import sklearn
 from sklearn.metrics import confusion_matrix
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.metrics import make_scorer
+from sklearn.model_selection import GridSearchCV
+from sklearn.naive_bayes import GaussianNB
+from sklearn.neighbors import KNeighborsClassifier
+import scikitplot as skplt
+import xgboost as xgb
+from sklearn.ensemble import RandomForestClassifier
+from scipy.stats import skew
 from qpsolvers import solve_qp, solve_ls
 
 font = {'family': 'serif',
@@ -35,6 +45,18 @@ font = {'family': 'serif',
         'size': 22}
 
 rc('font', **font)
+
+def reduce_dim(X_train):
+
+    X_train = X_train.reshape(
+        [X_train.shape[0], X_train.shape[1], -1])
+    X_train = np.vstack(
+        [X_train.max(axis=2).T,
+         X_train.max(axis=2).T
+        ]).T
+    
+    return X_train
+
 
 def create_cdict(r, g, b):
     """
@@ -58,10 +80,12 @@ def metric(y_pred, y_real, thres=0):
         
     MCC_sta = sklearn.metrics.matthews_corrcoef(y_real,
                                                 y_pred)
-    TN, FP, FN, TP = confusion_matrix(
-            y_real, y_pred).ravel()
-    TSS = TPR = TP/(TP+FN) + TN/(TN+FP)-1
-
+    try:
+        TN, FP, FN, TP = confusion_matrix(
+                y_real, y_pred).ravel()
+        TSS = TPR = TP/(TP+FN) + TN/(TN+FP)-1
+    except:
+        TSS = 0
     return MCC_sta, TSS
 
 
@@ -227,75 +251,106 @@ def residual(params, x, data, eps_data):
 
 
 def Prob_train(X_train, Y_train, X_t, Y_bin, 
-               delay, num_channel, 
+               delay, weights, num_channel, 
                dst_peak, callname, 
+               device, method, 
                train=True):
 
     weight_len = 12
-    for_num = delay//2
-    weight_clu = []
-    weight_scale = []
     l1_ratio = 0.05
-    # gap = 24/weight_len
-    weights = np.ones(weight_len)/weight_len
-    weights_0 = weights
+    # weights_0 = weights
     batch = 64
-    # module = CNN_batch_multi(0.6, 
-    #                          X_train.shape[1], 
-    #                          int(X_train.shape[2]/2), 
-    #                          weight_len)
-    my_callbacks = [Checkpoint(f_params=callname),
-                LRScheduler(WarmRestartLR),
-                EarlyStopping(patience=5)]
-    Resi_opt = 1000
-    module = ResidualAttentionModel_andong_pre(num_channel)
-    MCC_opt = 0
-    TSS_opt = 0
-    weights_opt = np.ones(weight_len)
-    TP_best, FP_best, TN_best, FN_best, TSS_best, MCC_best \
-        = 0, 0, 0, 0, 0, 0
-    
-    X_train = torch.from_numpy(X_train).float()
-    X_t = torch.from_numpy(X_t).float()
+    Y_train_prob = np.zeros(Y_bin.shape)
 
-    model = PhysinformedNet(
-        module=module,
-        max_epochs=100,
-        lr=1e-3,
-        train_split=CVSplit(5, stratified=False),  
-        criterion=torch.nn.MSELoss,
-        # train_split=None,
-        batch_size=batch,
-        optimizer=torch.optim.Adam,
-        callbacks=my_callbacks,
-        loss=my_weight_rmse2,
-        alpha=1e-4,
-        l1_ratio=l1_ratio,
-        device='cuda',
-        weight=weights_0,
-        num_output=weight_len,
-        # weight=weights,
-        verbose=1,
-        optimizer__weight_decay=0,
-        iterator_train__shuffle=True,
-    )
-    
-    Y_cdf, _, dst_thres = cdf_AH(
-        Y_train.reshape(-1, 1), dst_peak)
-    
-    if train:
-        Y_cdf = norm_cdf(Y_cdf, dst_thres).reshape(Y_train.shape)
-        model.fit(X_train, Y_cdf)
-        model.load_params(f_params=callname)
+    # seed_torch(1032)
+    if method == 'CNN':
+        my_callbacks = [Checkpoint(f_params=callname),
+                    LRScheduler(WarmRestartLR),
+                    EarlyStopping(patience=5)]
+        if X_train.shape[2] == 256:
+            # module = ResidualAttentionModel_andong_256(num_channel)
+            module = CNN_batch_multi(0.6, 
+                            X_train.shape[1], 
+                            int(X_train.shape[2]/2), 
+                            weight_len)
+        elif X_train.shape[2] == 64:
+            # module = ResidualAttentionModel_andong_64(num_channel)
+            module = CNN_batch_multi(0.6, 
+                            X_train.shape[1], 
+                            int(X_train.shape[2]/2), 
+                            weight_len)
+        X_train = torch.from_numpy(X_train).float()
+        X_t = torch.from_numpy(X_t).float()
+
+        model = PhysinformedNet(
+            module=module,
+            max_epochs=100,
+            lr=1e-3,
+            train_split=CVSplit(5, stratified=False),  
+            criterion=torch.nn.MSELoss,
+            # train_split=None,
+            batch_size=batch,
+            optimizer=torch.optim.Adam,
+            callbacks=my_callbacks,
+            loss=my_weight_rmse2,
+            alpha=1e-4,
+            l1_ratio=l1_ratio,
+            device=device,
+            # weight=weights_0,
+            num_output=weight_len,
+            weight=weights,
+            verbose=1,
+            optimizer__weight_decay=0,
+            iterator_train__shuffle=True,
+        )
+        
+        Y_cdf, _, dst_thres = cdf_AH(
+            Y_train.reshape(-1, 1), dst_peak)
+        
+        if train:
+            Y_cdf = norm_cdf(Y_cdf, dst_thres).reshape(Y_train.shape)
+            model.fit(X_train, Y_cdf)
+            model.load_params(f_params=callname)
+        else:
+            model.initialize()
+            model.load_params(f_params=callname)
+
+        Y_train_prob = model.predict_proba(X_t)
+
     else:
-        model.initialize()
-        model.load_params(f_params=callname)
+        # print('shape of X_train {}'.format(X_train.shape))
+        X_train = reduce_dim(X_train)
+        X_t = reduce_dim(X_t)
+        # print('shape of X_train {}'.format(X_train.shape))
+        print('shape of X_t {}'.format(X_t.shape))
+        print('shape of Y {}'.format(Y_train.shape))
+        seed_torch(1029)
+        MCC_scorer = make_scorer(sklearn.metrics.matthews_corrcoef)
 
-    Y_train_prob = model.predict_proba(X_t)
+        if method == 'tree':
+            model = DecisionTreeClassifier()
+            params = {'max_depth': range(2, 10)}
+        elif method == 'bayes':
+            model = GaussianNB()
+            params = {}
+        elif method == 'knn':
+            model = KNeighborsClassifier()
+            params = {'n_neighbors': range(2, 15, 2)}
+        elif method == 'xgb':
+            model = xgb.XGBClassifier()
+            params = {'max_depth': range(2, 15, 2)}
+        elif method == 'forest':
+            model = RandomForestClassifier(random_state=0)
+            params = {'max_depth': range(2, 9, 2)}
+
+        for i in range(weight_len):
+            model.fit(X_train, Y_train[:, i])
+            Y_train_prob[:, i] = model.predict_proba(X_t)[:, 1]
+
     _, _, _, thres_train, _ = ROC(Y_bin[:, -1],
                                 Y_train_prob[:, -1])
     Y_pred = (Y_train_prob >= thres_train).astype(bool)
-    MCC, TSS = metric(Y_pred[:, -1], Y_bin[:, -1])
+    MCC, TSS = metric(Y_pred[:, 0], Y_bin[:, 0])
     # print('Simple CNN MCC/TSS: {}/{}'.format(MCC, TSS))
 
     return Y_train_prob
@@ -406,9 +461,10 @@ def prob_pred(y_pred, y_reg,
               date, thres, figname):
 
     fig, ax = plt.subplots(figsize=(16, 8))
-    lm1 = ax.plot(date, y_pred, 'r.-', label='Prob')
-    lm2 = ax.plot(date, np.tile(thres, y_reg.shape[0]),
-            'kx-', label='threshold')
+    lm1 = ax.plot(date, norm_05(y_pred, thres), 
+                  'r.-', label='Prob')
+    lm2 = ax.plot(date, np.tile(0.5, y_reg.shape[0]),
+            'kx-', label='50% probability')
     ax1 = ax.twinx()
     lm3 = ax1.plot(date, y_reg, 'b.-', label='Dst')
 
@@ -441,17 +497,6 @@ def SoHO_plot(X, Y_reg, date,
                 'ds9grey', 'EIT195', 'ds9bb',
                 'ds9grey', 'EIT195', 'ds9bb']
 
-    ds9he = {'red': lambda v : np.interp(v, [0, 0.015, 0.25, 0.5, 1],
-                                            [0, 0.5, 0.5, 0.75, 1]),
-            'green': lambda v : np.interp(v, [0, 0.065, 0.125, 0.25, 0.5, 1],
-                                            [0, 0, 0.5, 0.75, 0.81, 1]),
-            'blue': lambda v : np.interp(v, [0, 0.015, 0.03, 0.065, 0.25, 1],
-                                            [0, 0.125, 0.375, 0.625, 0.25, 1])}
-
-    ds9rainbow = {'red': lambda v : np.interp(v, [0, 0.2, 0.6, 0.8, 1], [1, 0, 0, 1, 1]),
-              'green': lambda v : np.interp(v, [0, 0.2, 0.4, 0.8, 1], [0, 0, 1, 1, 0]),
-              'blue': lambda v : np.interp(v, [0, 0.4, 0.6, 1], [1, 1, 0, 0])}
-
     data = np.array(pd.read_csv('Data/eit_dark_green.csv'))
     EIT195 = _cmap_from_rgb(data[: ,0],
                             data[: ,1]*3,
@@ -460,16 +505,6 @@ def SoHO_plot(X, Y_reg, date,
     # Set aliases, where colormap exists in matplotlib
     cmap_d['ds9bb'] = cmap_d['afmhot']
     cmap_d['ds9grey'] = cmap_d['gray']
-
-    # Register all other colormaps
-    # register_cmap('ds9b', data=ds9b)
-    # register_cmap('ds9cool', data=ds9cool)
-    # register_cmap('ds9a', data=ds9a)
-    # register_cmap('ds9i8', data=ds9i8)
-    # register_cmap('ds9aips0', data=ds9aips0)
-    # register_cmap(cmap=ds9rainbow)
-    # register_cmap('EIT195', data=EIT195)
-    # register_cmap('ds9heat', data=ds9heat)
 
     # st()
     n_max = n_max
@@ -481,12 +516,9 @@ def SoHO_plot(X, Y_reg, date,
     # ub = np.min([X.shape[0], idx+12])
     # lb = np.max([0, idx-36])
     ub, lb = X.shape[0], 0
-    # import ipdb;ipdb.set_trace()
-
 
     for n in range(n_max):
         for m, var in enumerate(var_idx):
-            # import ipdb;ipdb.set_trace()
             # st()
             if m == 1:
                 axs_image[m, n].contourf(X[lb+(ub-lb)//n_max*n, m],

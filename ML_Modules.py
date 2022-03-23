@@ -507,7 +507,7 @@ class PhysinformedNet(NeuralNet):
         
         l1_lambda = self.alpha*self.l1_ratio
         l1_reg = torch.tensor(0.)
-        l1_reg = l1_reg.cuda()
+        l1_reg = l1_reg.to(self.device)
         for param in self.module.parameters():
             l1_reg += torch.sum(torch.abs(param))
         loss1 = l1_lambda * l1_reg
@@ -515,7 +515,7 @@ class PhysinformedNet(NeuralNet):
         
         l2_lambda = self.alpha*(1-self.l1_ratio) 
         l2_reg = torch.tensor(0.)
-        l2_reg = l2_reg.cuda()
+        l2_reg = l2_reg.to(self.device)
         for param in self.module.parameters():
             l2_reg += torch.norm(param).sum()
         loss_ori += l2_lambda * l2_reg

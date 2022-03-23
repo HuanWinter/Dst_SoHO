@@ -670,10 +670,10 @@ class CNN_first_try(nn.Module):
         return self.net(X)
 
 
-class ResidualAttentionModel_andong_pre(nn.Module):
-    # for input size 64
+class ResidualAttentionModel_andong_256(nn.Module):
+    # for input size 256
     def __init__(self, n_var, output=12):
-        super(ResidualAttentionModel_andong_pre, self).__init__()
+        super(ResidualAttentionModel_andong_256, self).__init__()
         self.conv1 = nn.Sequential(
             nn.Conv2d(n_var, 64, kernel_size=7, stride=2,
                       padding=3, bias=False),
@@ -704,9 +704,7 @@ class ResidualAttentionModel_andong_pre(nn.Module):
         out = self.conv1(x)
         out = self.mpool1(out)
         # print(out.data)
-        # import ipdb; ipdb.set_trace()
         out = self.residual_block1(out)
-        # st()
         out = self.attention_module1(out)
         out = self.residual_block2(out)
         out = self.attention_module2(out)
@@ -726,10 +724,10 @@ class ResidualAttentionModel_andong_pre(nn.Module):
         return out
 
 
-class ResidualAttentionModel_andong_origin(nn.Module):
-    # for input size 200
-    def __init__(self, n_var):
-        super(ResidualAttentionModel_andong_origin, self).__init__()
+class ResidualAttentionModel_andong_64(nn.Module):
+    # for input size 64
+    def __init__(self, n_var, output=12):
+        super(ResidualAttentionModel_andong_64, self).__init__()
         self.conv1 = nn.Sequential(
             nn.Conv2d(n_var, 64, kernel_size=7, stride=2,
                       padding=3, bias=False),
@@ -738,7 +736,7 @@ class ResidualAttentionModel_andong_origin(nn.Module):
         )
         self.mpool1 = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.residual_block1 = ResidualBlock(64, 256)
-        self.attention_module1 = AttentionModule_stage1(256, 256)
+        self.attention_module1 = AttentionModule_stage0(256, 256)
         self.residual_block2 = ResidualBlock(256, 512, 2)
         self.attention_module2 = AttentionModule_stage2(512, 512)
         self.attention_module2_2 = AttentionModule_stage2(512, 512)  # tbq add
@@ -752,9 +750,9 @@ class ResidualAttentionModel_andong_origin(nn.Module):
         self.mpool2 = nn.Sequential(
             nn.BatchNorm2d(1024),
             nn.ReLU(inplace=True),
-            nn.AvgPool2d(kernel_size=3, stride=2, padding=1)
+            nn.AvgPool2d(kernel_size=7, stride=1)
         )
-        self.fc = nn.Linear(1024, 1)
+        self.fc = nn.Linear(4096, output)
 
     def forward(self, x):
         out = self.conv1(x)
@@ -773,7 +771,7 @@ class ResidualAttentionModel_andong_origin(nn.Module):
         # out = self.residual_block4(out)
         # out = self.residual_block5(out)
         # out = self.residual_block6(out)
-        # out = self.mpool2(out)
+        out = self.mpool2(out)
         out = out.view(out.size(0), -1)
         out = self.fc(out)
 
