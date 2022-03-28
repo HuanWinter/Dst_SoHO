@@ -496,8 +496,8 @@ class PhysinformedNet(NeuralNet):
         '''        
        
              
-        loss_ori = self.loss(y_pred=y_pred.type(torch.FloatTensor).cuda(),
-                             y=y_true.type(torch.FloatTensor).cuda(),
+        loss_ori = self.loss(y_pred=y_pred.type(torch.FloatTensor).to(self.device),
+                             y=y_true.type(torch.FloatTensor).to(self.device),
                              pre_weight=self.pre_weight,
                              # alpha=self.alpha,
                              # l1_ratio=self.l1_ratio,

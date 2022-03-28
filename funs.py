@@ -268,11 +268,117 @@ def Prob_train(X_train, Y_train, X_t, Y_bin,
                     LRScheduler(WarmRestartLR),
                     EarlyStopping(patience=5)]
         if X_train.shape[2] == 256:
-            # module = ResidualAttentionModel_andong_256(num_channel)
+            module = ResidualAttentionModel_andong_256(num_channel)
+            # module = CNN_batch_multi(0.6, 
+            #                 X_train.shape[1], 
+            #                 int(X_train.shape[2]/2), 
+            #                 weight_len)
+        elif X_train.shape[2] == 64:
+            # module = ResidualAttentionModel_andong_64(num_channel)
             module = CNN_batch_multi(0.6, 
                             X_train.shape[1], 
                             int(X_train.shape[2]/2), 
                             weight_len)
+        X_train = torch.from_numpy(X_train).float()
+        X_t = torch.from_numpy(X_t).float()
+
+        model = PhysinformedNet(
+            module=module,
+            max_epochs=100,
+            lr=1e-3,
+            train_split=CVSplit(5, stratified=False),  
+            criterion=torch.nn.MSELoss,
+            # train_split=None,
+            batch_size=batch,
+            optimizer=torch.optim.Adam,
+            callbacks=my_callbacks,
+            loss=my_weight_rmse2,
+            alpha=1e-4,
+            l1_ratio=l1_ratio,
+            device=device,
+            # weight=weights_0,
+            num_output=weight_len,
+            weight=weights,
+            verbose=1,
+            optimizer__weight_decay=0,
+            iterator_train__shuffle=True,
+        )
+        
+        Y_cdf, _, dst_thres = cdf_AH(
+            Y_train.reshape(-1, 1), dst_peak)
+        
+        if train:
+            Y_cdf = norm_cdf(Y_cdf, dst_thres).reshape(Y_train.shape)
+            model.fit(X_train, Y_cdf)
+            model.load_params(f_params=callname)
+        else:
+            model.initialize()
+            model.load_params(f_params=callname)
+
+        Y_train_prob = model.predict_proba(X_t)
+
+    else:
+        # print('shape of X_train {}'.format(X_train.shape))
+        X_train = reduce_dim(X_train)
+        X_t = reduce_dim(X_t)
+        # print('shape of X_train {}'.format(X_train.shape))
+        print('shape of X_t {}'.format(X_t.shape))
+        print('shape of Y {}'.format(Y_train.shape))
+        seed_torch(1029)
+        MCC_scorer = make_scorer(sklearn.metrics.matthews_corrcoef)
+
+        if method == 'tree':
+            model = DecisionTreeClassifier()
+            params = {'max_depth': range(2, 10)}
+        elif method == 'bayes':
+            model = GaussianNB()
+            params = {}
+        elif method == 'knn':
+            model = KNeighborsClassifier()
+            params = {'n_neighbors': range(2, 15, 2)}
+        elif method == 'xgb':
+            model = xgb.XGBClassifier()
+            params = {'max_depth': range(2, 15, 2)}
+        elif method == 'forest':
+            model = RandomForestClassifier(random_state=0)
+            params = {'max_depth': range(2, 9, 2)}
+
+        for i in range(weight_len):
+            model.fit(X_train, Y_train[:, i])
+            Y_train_prob[:, i] = model.predict_proba(X_t)[:, 1]
+
+    _, _, _, thres_train, _ = ROC(Y_bin[:, -1],
+                                Y_train_prob[:, -1])
+    Y_pred = (Y_train_prob >= thres_train).astype(bool)
+    MCC, TSS = metric(Y_pred[:, 0], Y_bin[:, 0])
+    # print('Simple CNN MCC/TSS: {}/{}'.format(MCC, TSS))
+
+    return Y_train_prob
+
+
+def std_train(X_train, Y_train, X_t, Y_bin, 
+               delay, weights, num_channel, 
+               dst_peak, callname, 
+               device, method, 
+               train=True):
+
+    weight_len = 12
+    l1_ratio = 0.05
+    # weights_0 = weights
+    batch = 64
+    Y_train_prob = np.zeros(Y_bin.shape)
+
+    # seed_torch(1032)
+    if method == 'CNN':
+        my_callbacks = [Checkpoint(f_params=callname),
+                    LRScheduler(WarmRestartLR),
+                    EarlyStopping(patience=5)]
+        if X_train.shape[2] == 256:
+            module = ResidualAttentionModel_andong_256(num_channel)
+            # module = CNN_batch_multi(0.6, 
+            #                 X_train.shape[1], 
+            #                 int(X_train.shape[2]/2), 
+            #                 weight_len)
         elif X_train.shape[2] == 64:
             # module = ResidualAttentionModel_andong_64(num_channel)
             module = CNN_batch_multi(0.6, 
